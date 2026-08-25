@@ -24,7 +24,7 @@ class ParquetSinkFormat extends FileSinkFormat {
         df,
         sinkSettings,
         singleColumnJson = false,
-        (writer, outputPath) => writer.parquet(outputPath)
+        writeGroup = (writer, outputPath) => writer.parquet(outputPath)
       )
     } else {
       // Convert the mapped resource JSON strings into a frame and write it as Parquet.

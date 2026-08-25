@@ -27,7 +27,7 @@ class DeltaSinkFormat extends FileSinkFormat {
         df,
         sinkSettings,
         singleColumnJson = false,
-        (writer, outputPath) => writer.format(SinkContentTypes.DELTA_LAKE).save(outputPath)
+        writeGroup = (writer, outputPath) => writer.format(SinkContentTypes.DELTA_LAKE).save(outputPath)
       )
     } else {
       // Convert the mapped resource JSON strings into a frame and write it as Delta Lake.

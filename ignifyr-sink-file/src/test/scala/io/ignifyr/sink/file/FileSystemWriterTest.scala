@@ -386,6 +386,64 @@ class FileSystemWriterTest extends AnyFlatSpec with BeforeAndAfterAll {
   }
 
   /**
+   * Tests whether FileSystemWriter can write a DataFrame into CSV files, partitioned by resource type.
+   *
+   * The test uses the following FileSystemSinkSettings:
+   * {
+   *  "path": "output-csv-by-resource",
+   *  "contentType": "csv",
+   *  "options": {
+   *    "header": true
+   *  },
+   *  "partitionByResourceType": true
+   * }
+   *
+   * The expected output structure is:
+   *
+   * > output-csv-by-resource
+   *  > Condition
+   *    > .part-00000-5519e6da-a21c-45e9-b320-d0085e2901b4-c000.csv.crc
+   *    > .part-00000-5519e6da-a21c-45e9-b320-d0085e2901b4-c000.csv
+   *  > Patient
+   *    > .part-00000-ba4e919a-88a0-4158-8d89-58aa45ef149f-c000.csv.crc
+   *    > .part-00000-ba4e919a-88a0-4158-8d89-58aa45ef149f-c000.csv
+   * */
+  it should "write DataFrame as partitioned CSV files based on resource type" in {
+    // Define the output path for the csv files
+    val outputFolderPath = s"${IgnifyrConfig.engineConfig.contextPath}/output-csv-by-resource"
+    // Instantiate the FileSystemWriter with csv content type and resource type partitioning
+    val fileSystemWriter = new FileSystemWriter(sinkSettings =
+      FileSystemSinkSettings(
+        path = outputFolderPath,
+        contentType = SinkContentTypes.CSV,
+        options = Map("header" -> "true"),
+        partitionByResourceType = true
+      )
+    )
+    // Write the DataFrame using the FileSystemWriter
+    fileSystemWriter.write(sparkSession, df, sparkSession.sparkContext.collectionAccumulator[FhirMappingResult])
+
+    // Verify that the data was correctly written and partitioned under "Condition"
+    val conditionDf = sparkSession.read
+      .option("header", value = true)
+      .csv(s"$outputFolderPath/Condition")
+    conditionDf.count() shouldBe 5
+    // Since each resource type is now flattened independently, Condition's CSV only contains Condition's own
+    // primitive fields (excluding resourceType, which is redundant given the output folder name):
+    // id, onsetDateTime, abatementDateTime.
+    conditionDf.columns.length shouldBe 3
+
+    // Verify that the data was correctly written and partitioned under "Patient"
+    val patientDf = sparkSession.read
+      .option("header", value = true)
+      .csv(s"$outputFolderPath/Patient")
+    patientDf.count() shouldBe 10
+    // Patient's CSV only contains Patient's own primitive fields (excluding resourceType): id, active, gender,
+    // birthDate, deceasedDateTime.
+    patientDf.columns.length shouldBe 5
+  }
+
+  /**
    * After the tests complete, delete the output folders.
    * */
   override protected def afterAll(): Unit = {

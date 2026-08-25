@@ -20,8 +20,8 @@ trait SinkSettings
  * @param options                 Further options (Spark data source write options)
  * @param partitionByResourceType Flag to determine whether to partition the output files by FHIR resource type.
  *                                When enabled, each resource type will be written to a separate directory.
- *                                Supported content types: {@link SinkContentTypes.NDJSON}, {@link SinkContentTypes.PARQUET}
- *                                and {@link SinkContentTypes.DELTA_LAKE}
+ *                                Supported content types: {@link SinkContentTypes.NDJSON}, {@link SinkContentTypes.PARQUET},
+ *                                {@link SinkContentTypes.DELTA_LAKE} and {@link SinkContentTypes.CSV}
  * @param partitioningColumns     Keeps partitioning columns for specific resource types.
  *                                Applicable only when data is partitioned by resource type (via "partitionByResourceType").
  *                                Supported content types: {@link SinkContentTypes.PARQUET} and {@link SinkContentTypes.DELTA_LAKE}

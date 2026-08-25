@@ -43,16 +43,20 @@ content type 'x'" message.
 - `FileSystemWriter` is a thin dispatcher to `FileSinkFormatRegistry.sinkFormat(…)`.
 - `FileSinkSupport` centralizes the partition-by-resource-type layout, so the enterprise Delta writer
   reuses identical machinery and only supplies its terminal write. Its `singleColumnJson` flag
-  distinguishes ndjson (raw single column) from parquet/delta (parsed, partition columns injected).
-  Mapped results without a `resourceType` discriminator are skipped with a warning (never routed to a
-  literal "null" directory).
+  distinguishes ndjson (raw single column) from parquet/delta/csv (parsed). A second flag,
+  `flattenNonNestedColumns`, is CSV-only: it reduces the parsed per-resource-type frame to its
+  non-array/non-struct columns and drops `resourceType` (redundant once each type has its own output
+  folder) — and, because CSV has no `partitioningColumns` support, it also suppresses the
+  partition-column-injection step so CSV never receives sub-partition columns. Mapped results without a
+  `resourceType` discriminator are skipped with a warning (never routed to a literal "null" directory).
   - **There is deliberately no per-scheme branch.** Paths go to Spark's `DataFrameWriter` as given, so
     `hdfs://`, `s3a://` and plain local paths all work and all honour the requested content type plus
     `numOfPartitions`/`options`/`partitioningColumns`. Don't reintroduce one: the previous
     `path.startsWith("hdfs://")` special case bypassed the format handler entirely and wrote raw text,
     silently turning **parquet and delta** output into `.txt` on HDFS, and ignoring the sink settings for
-    ndjson too (fixed 2026-07-25). CSV was never affected — it does not support `partitionByResourceType`
-    and so never routes through this helper.
+    ndjson too (fixed 2026-07-25). CSV now also supports `partitionByResourceType` (added 2026-08-25),
+    routing through the same helper with `flattenNonNestedColumns = true`; it still does not support the
+    per-resource-type `partitioningColumns` sub-partitioning.
   - **Payloads never reach the driver.** Only the per-resource-type *counts* are collected; each type is
     then written from its own filtered `Dataset`. The narrowed two-column frame is `persist`ed for the
     duration (each type re-scans it) and unpersisted in a `finally` — it is a frame local to this helper,

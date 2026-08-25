@@ -24,7 +24,7 @@ class NdjsonSinkFormat extends FileSinkFormat {
         df,
         sinkSettings,
         singleColumnJson = true,
-        (writer, outputPath) => writer.text(outputPath)
+        writeGroup = (writer, outputPath) => writer.text(outputPath)
       )
     } else {
       FileSinkSupport

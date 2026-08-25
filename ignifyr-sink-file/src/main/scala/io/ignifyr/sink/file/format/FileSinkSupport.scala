@@ -3,7 +3,8 @@ package io.ignifyr.sink.file.format
 import com.typesafe.scalalogging.Logger
 import io.ignifyr.engine.model.{FhirMappingResult, FileSystemSinkSettings}
 import org.apache.spark.sql.functions.col
-import org.apache.spark.sql.{DataFrameWriter, Dataset, Row, SaveMode, SparkSession}
+import org.apache.spark.sql.types.{ArrayType, StructType}
+import org.apache.spark.sql.{DataFrame, DataFrameWriter, Dataset, Row, SaveMode, SparkSession}
 
 /**
  * Shared write helpers for the file sink formats. Owns the FHIR-aware "partition by resource type"
@@ -41,9 +42,15 @@ object FileSinkSupport {
    * Each resource type is written from its own filtered [[Dataset]], so the mapped payloads stay
    * distributed and are never collected to the driver.
    *
-   * @param singleColumnJson when true the per-resource-type frame is a single `mappedResourceJson`
-   *                         string column (NDJSON); otherwise the JSON strings are parsed into a
-   *                         multi-column frame (parquet/delta) with any missing partition columns added.
+   * @param singleColumnJson         when true the per-resource-type frame is a single `mappedResourceJson`
+   *                                 string column (NDJSON); otherwise the JSON strings are parsed into a
+   *                                 multi-column frame (parquet/delta/csv) with any missing partition
+   *                                 columns added.
+   * @param flattenNonNestedColumns  when true (CSV) the parsed frame is reduced to its non-array/non-struct
+   *                                 columns and the `resourceType` column is dropped — it is redundant once
+   *                                 each type has its own output folder. CSV does not support the
+   *                                 per-resource-type `partitioningColumns`, so partition columns are never
+   *                                 injected in this mode. Ignored when `singleColumnJson` is true.
    * @param writeGroup       applies the terminal, format-specific write to the (already partition-configured)
    *                         writer and the resource-type output path.
    */
@@ -52,6 +59,7 @@ object FileSinkSupport {
       df: Dataset[FhirMappingResult],
       sinkSettings: FileSystemSinkSettings,
       singleColumnJson: Boolean,
+      flattenNonNestedColumns: Boolean = false,
       writeGroup: (DataFrameWriter[Row], String) => Unit
   ): Unit = {
     import spark.implicits._
@@ -80,7 +88,15 @@ object FileSinkSupport {
       routableTypes.map(_.getString(0)).sorted.foreach { resourceType =>
         val resourceJson =
           payloads.filter(col("resourceType") === resourceType).select("mappedResourceJson").as[String]
-        writeResourceTypeGroup(spark, resourceType, resourceJson, sinkSettings, singleColumnJson, writeGroup)
+        writeResourceTypeGroup(
+          spark,
+          resourceType,
+          resourceJson,
+          sinkSettings,
+          singleColumnJson,
+          flattenNonNestedColumns,
+          writeGroup
+        )
       }
     } finally
       payloads.unpersist()
@@ -93,17 +109,24 @@ object FileSinkSupport {
       resourceJson: Dataset[String],
       sinkSettings: FileSystemSinkSettings,
       singleColumnJson: Boolean,
+      flattenNonNestedColumns: Boolean,
       writeGroup: (DataFrameWriter[Row], String) => Unit
   ): Unit = {
-    val partitionColumns = sinkSettings.getPartitioningColumns(resourceType)
+    // CSV does not support the per-resource-type `partitioningColumns` sub-partitioning.
+    val partitionColumns =
+      if (flattenNonNestedColumns) List.empty[String] else sinkSettings.getPartitioningColumns(resourceType)
 
     val resourcesDF = if (singleColumnJson) {
       // Single-column frame of raw JSON strings (NDJSON output).
       resourceJson.toDF("mappedResourceJson")
     } else {
-      // Parse the JSON strings into a multi-column frame (parquet/delta output).
+      // Parse the JSON strings into a multi-column frame (parquet/delta/csv output).
       val parsed = spark.read.json(resourceJson)
-      if (partitionColumns.isEmpty) {
+      if (flattenNonNestedColumns) {
+        // CSV is a flat data structure: keep only primitive columns, and drop `resourceType` since it
+        // is already reflected by the output folder name.
+        filterNonNestedColumns(parsed).drop("resourceType")
+      } else if (partitionColumns.isEmpty) {
         parsed
       } else {
         // Some partition columns may not exist in the frame (e.g. nested fields like
@@ -124,5 +147,15 @@ object FileSinkSupport {
     val partitionedWriter =
       if (partitionColumns.nonEmpty) writer.partitionBy(partitionColumns: _*) else writer
     writeGroup(partitionedWriter, outputPath)
+  }
+
+  /**
+   * Keeps only the columns that are not array type or struct type, since CSV is a flat data structure.
+   */
+  def filterNonNestedColumns(df: DataFrame): DataFrame = {
+    val nonArrayAndStructCols = df.schema.fields
+      .filterNot(field => field.dataType.isInstanceOf[ArrayType] || field.dataType.isInstanceOf[StructType])
+      .map(_.name)
+    df.select(nonArrayAndStructCols.head, nonArrayAndStructCols.tail: _*)
   }
 }
